@@ -1,11 +1,35 @@
 const User = require("../models/user");
 const bcrypt = require("bcryptjs");
-
 exports.registerUser = async (req, res) => {
   try {
-    const { email, password, ...rest } = req.body;
+    const {
+      fullName,
+      email,
+      password,
+      phoneNumber,
+      dateOfBirth,
+      gender,
+      location,
+      emergencyContact,
+      healthIssues,
+      role,
+    } = req.body;
 
-    // Check if user exists
+    // Validate required fields
+    if (
+      !fullName ||
+      !email ||
+      !password ||
+      !phoneNumber ||
+      !dateOfBirth ||
+      !gender ||
+      !location ||
+      !role
+    ) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    // Check if user already exists
     const existing = await User.findOne({ email });
     if (existing) {
       return res.status(400).json({ message: "Email already in use" });
@@ -15,15 +39,28 @@ exports.registerUser = async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // Create user
-    const user = new User({ ...rest, email, password: hashedPassword });
+    const user = new User({
+      fullName,
+      email,
+      password: hashedPassword,
+      phoneNumber,
+      dateOfBirth,
+      gender,
+      location,
+      emergencyContact,
+      healthIssues,
+      role,
+    });
+
     await user.save();
 
     return res.status(201).json({ message: "User registered successfully" });
   } catch (err) {
-    console.error("Registration error:", err);
-    return res.status(500).json({ message: "Server error" });
+    console.error("Registration error:", err.message, err);
+    return res.status(500).json({ message: err.message || "Server error" });
   }
 };
+
 exports.loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
