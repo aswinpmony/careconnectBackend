@@ -262,22 +262,46 @@ exports.getProfileData = async (req, res) => {
 // ------------------- SEARCH USERS (exclude connected + pending) -------------------
 exports.searchUsers = async (req, res) => {
   try {
-    const searchQuery = req.query.q || "";
-    const currentUserId = req.query.userId; // Pass the current logged-in user's ID in query or token
+    const searchQuery = (req.query.q || "").trim();
+    const currentUserId = req.query.userId;
 
+    // Validate current user ID
     if (!mongoose.Types.ObjectId.isValid(currentUserId)) {
-      return res.status(400).json({ message: "Invalid current user ID" });
+      return res.status(400).json({
+        message: "Invalid current user ID",
+      });
     }
 
-    // Get current user's connections
+    // Get the current user's role and connections
     const currentUser = await User.findById(currentUserId).select(
-      "linkedUsers"
+      "linkedUsers role"
     );
+
     if (!currentUser) {
-      return res.status(404).json({ message: "User not found" });
+      return res.status(404).json({
+        message: "User not found",
+      });
     }
 
-    // Find all pending connection requests (both directions)
+    // Show only the opposite role
+    let targetRoles;
+
+    if (currentUser.role === "Elder") {
+      // Elders can find caregivers only
+      targetRoles = ["CareGiver", "Caregiver"];
+    } else if (
+      currentUser.role === "CareGiver" ||
+      currentUser.role === "Caregiver"
+    ) {
+      // Caregivers can find elders only
+      targetRoles = ["Elder"];
+    } else {
+      return res.status(400).json({
+        message: "Invalid user role",
+      });
+    }
+
+    // Find pending requests in either direction
     const pendingRequests = await ConnectionRequest.find({
       $or: [
         { fromUserId: currentUserId, status: "pending" },
@@ -285,30 +309,48 @@ exports.searchUsers = async (req, res) => {
       ],
     }).select("fromUserId toUserId");
 
-    // Collect IDs to exclude
+    // Exclude the current user, connected users and pending requests
     const excludeIds = new Set([
-      currentUserId,
+      currentUserId.toString(),
       ...currentUser.linkedUsers.map((id) => id.toString()),
     ]);
 
-    pendingRequests.forEach((req) => {
-      excludeIds.add(req.fromUserId.toString());
-      excludeIds.add(req.toUserId.toString());
+    pendingRequests.forEach((request) => {
+      excludeIds.add(request.fromUserId.toString());
+      excludeIds.add(request.toUserId.toString());
     });
 
-    // Now search users excluding these IDs
-    const users = await User.find({
-      _id: { $nin: Array.from(excludeIds) },
-      fullName: { $regex: searchQuery, $options: "i" },
-    }).select("fullName email role phoneNumber");
+    // Escape special regex characters in the search text
+    const escapedQuery = searchQuery.replace(
+      /[.*+?^${}()|[\]\\]/g,
+      "\\$&"
+    );
 
-    res.status(200).json(users);
+    // Search only users with the opposite role
+    const users = await User.find({
+      _id: {
+        $nin: Array.from(excludeIds),
+      },
+      role: {
+        $in: targetRoles,
+      },
+      fullName: {
+        $regex: escapedQuery,
+        $options: "i",
+      },
+    })
+      .select("fullName email role phoneNumber")
+      .sort({ fullName: 1 });
+
+    return res.status(200).json(users);
   } catch (err) {
     console.error("Search users error:", err);
-    res.status(500).json({ message: "Error searching users" });
+
+    return res.status(500).json({
+      message: "Error searching users",
+    });
   }
 };
-
 // ------------------- SEND CONNECTION REQUEST -------------------
 exports.sendConnectionRequest = async (req, res) => {
   try {
